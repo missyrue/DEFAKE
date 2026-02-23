@@ -18,6 +18,18 @@ import os
 import sys
 import time
 
+# Disable proxy for Hugging Face downloads if causing issues
+# The proxy at 127.0.0.1:33535 may block Hugging Face access
+# Store original values in case we need them later
+_original_proxy_vars = {}
+for key in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']:
+    if key in os.environ:
+        _original_proxy_vars[key] = os.environ[key]
+        del os.environ[key]
+
+# Enable offline mode for Hugging Face to use cached models
+os.environ['HF_HUB_OFFLINE'] = '1'
+
 import numpy as np
 from flask import Flask, jsonify, request
 from flask_cors import CORS

@@ -216,8 +216,24 @@ class CloakModule:
     def _load_clip(self):
         """Load CLIP model and processor from Hugging Face Hub."""
         logger.info("CloakModule: Loading CLIP model '%s' ...", self.CLIP_MODEL_ID)
-        self._processor = CLIPProcessor.from_pretrained(self.CLIP_MODEL_ID)
-        self._model = CLIPModel.from_pretrained(self.CLIP_MODEL_ID).to(self.device)
+        # Use local_files_only=True to avoid network requests if model is cached
+        # This helps when proxy settings block Hugging Face access
+        try:
+            logger.info("Attempting to load CLIP model from local cache...")
+            self._processor = CLIPProcessor.from_pretrained(self.CLIP_MODEL_ID, local_files_only=True)
+            self._model = CLIPModel.from_pretrained(self.CLIP_MODEL_ID, local_files_only=True).to(self.device)
+            logger.info("Successfully loaded CLIP model from local cache.")
+        except Exception as e:
+            logger.warning("Failed to load from cache (%s), trying with network access...", str(e))
+            # Fallback: try without local_files_only if cache is incomplete
+            # Note: This may fail if proxy blocks access
+            try:
+                self._processor = CLIPProcessor.from_pretrained(self.CLIP_MODEL_ID)
+                self._model = CLIPModel.from_pretrained(self.CLIP_MODEL_ID).to(self.device)
+            except Exception as network_error:
+                logger.error("Failed to load CLIP model: %s", str(network_error))
+                logger.error("If you see proxy errors, ensure the model is cached locally or fix proxy settings.")
+                raise
         self._model.eval()
 
         # Extract and freeze vision backbone — we only need the image encoder
