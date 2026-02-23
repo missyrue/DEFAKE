@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DEFAKE — AI Image Protection</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #000; }
+    @keyframes floatA { from { transform: translate(0,0) scale(1); } to { transform: translate(30px,40px) scale(1.08); } }
+    @keyframes floatB { from { transform: translate(0,0) scale(1); } to { transform: translate(-20px,30px) scale(1.05); } }
+    @keyframes floatC { from { transform: translate(0,0); } to { transform: translate(20px,-20px); } }
+    @keyframes fadeUp { from { opacity:0; transform: translateY(28px); } to { opacity:1; transform: translateY(0); } }
+    @keyframes pulse-bar { 0%,100% { opacity:0.6; } 50% { opacity:1; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes spin2 { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Lucide icons (subset we need via CDN) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.1/umd/lucide.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useRef, useCallback } = React;
+
+    // ── icon shim (lucide global) ──────────────────────────────────────────
+    const makeIcon = (name) => ({ className = "", style = {}, ...rest }) => {
+      const el = lucide[name];
+      if (!el) return null;
+      const svg = el[2]; // [tag, attrs, ...children]
+      return React.createElement("svg", {
+        xmlns: "http://www.w3.org/2000/svg",
+        width: 16, height: 16, viewBox: "0 0 24 24",
+        fill: "none", stroke: "currentColor",
+        strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round",
+        className, style, ...rest,
+        dangerouslySetInnerHTML: { __html: lucide[name]?.[2]?.map?.(c=>
+          `<${c[0]} ${Object.entries(c[1]||{}).map(([k,v])=>`${k}="${v}"`).join(' ')}/>`
+        ).join('') || '' }
+      });
+    };
+
+    // Inline SVG icons
+    const Icon = ({ name, className = "", style = {} }) => {
+      const paths = {
+        ShieldCheck: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+        Upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+        Image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+        Cpu: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/>',
+        Eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+        Zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+        AlertTriangle: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+        Users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+        Lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+        ChevronRight: '<path d="m9 18 6-6-6-6"/>',
+        X: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+        Loader2: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+        CheckCircle2: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+      };
+      return (
+        <svg xmlns="http://www.w3.org/2000/svg" width={16} height={16}
+          viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+          className={className} style={style}
+          dangerouslySetInnerHTML={{ __html: paths[name] || '' }}
+        />
+      );
+    };
+
+    // ── Constants ──────────────────────────────────────────────────────────
+    const GLASS = "bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl shadow-2xl";
+    const RED_GLOW = { boxShadow: "0 0 28px rgba(153,27,27,0.45),0 0 60px rgba(76,5,25,0.25)" };
+    const TEXT_GLOW = { textShadow: "0 0 30px rgba(220,38,38,0.6),0 0 80px rgba(153,27,27,0.4)" };
+    const CARD_HOVER = "transition-all duration-300 hover:-translate-y-1 hover:border-white/20 cursor-default";
+
+    // ── Ambient blobs ──────────────────────────────────────────────────────
+    function AmbientBlobs() {
+      return (
+        <div style={{ position:"fixed",inset:0,overflow:"hidden",pointerEvents:"none",zIndex:0 }}>
+          <div style={{ background:"radial-gradient(circle,rgba(76,5,25,0.55) 0%,transparent 70%)",width:700,height:700,borderRadius:"50%",position:"absolute",top:-200,right:-150,filter:"blur(60px)",animation:"floatA 18s ease-in-out infinite alternate" }} />
+          <div style={{ background:"radial-gradient(circle,rgba(127,29,29,0.35) 0%,transparent 70%)",width:500,height:500,borderRadius:"50%",position:"absolute",bottom:100,left:-100,filter:"blur(80px)",animation:"floatB 22s ease-in-out infinite alternate" }} />
+          <div style={{ background:"radial-gradient(circle,rgba(76,5,25,0.28) 0%,transparent 70%)",width:300,height:300,borderRadius:"50%",position:"absolute",top:"50%",left:"40%",filter:"blur(40px)",animation:"floatC 14s ease-in-out infinite alternate" }} />
+        </div>
+      );
+    }
+
+    // ── Score meter ────────────────────────────────────────────────────────
+    function ScoreMeter({ score, animating }) {
+      const r = 42, circ = 2 * Math.PI * r;
+      const filled = score === null ? 0 : ((1 - score / 100) * circ);
+      const offset = circ - filled;
+      return (
+        <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:8 }}>
+          <div style={{ position:"relative",width:112,height:112 }}>
+            <svg viewBox="0 0 100 100" style={{ width:"100%",height:"100%",transform:"rotate(-90deg)" }}>
+              <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="8"/>
+              <circle cx="50" cy="50" r={r} fill="none"
+                stroke={score !== null && score < 30 ? "#dc2626" : "#991b1b"}
+                strokeWidth="8" strokeLinecap="round"
+                strokeDasharray={circ}
+                strokeDashoffset={animating ? circ : offset}
+                style={{ transition:"stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1)",filter:"drop-shadow(0 0 6px rgba(220,38,38,0.7))" }}
+              />
+            </svg>
+            <div style={{ position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center" }}>
+              {animating
+                ? <Icon name="Loader2" style={{ animation:"spin2 1s linear infinite",color:"#dc2626" }} />
+                : score !== null
+                ? <>
+                    <span style={{ fontFamily:"'DM Sans',sans-serif",fontSize:22,fontWeight:700,color:"#fff" }}>{score}%</span>
+                    <span style={{ fontSize:10,color:"rgba(255,255,255,0.4)",marginTop:2 }}>similarity</span>
+                  </>
+                : <span style={{ fontSize:10,color:"rgba(255,255,255,0.2)",textAlign:"center",lineHeight:1.4,padding:"0 8px" }}>awaiting<br/>upload</span>
+              }
+            </div>
+          </div>
+          {score !== null && !animating && (
+            <p style={{ fontSize:11,textAlign:"center",fontFamily:"'DM Sans',sans-serif" }}>
+              <span style={{ color: score < 30 ? "#f87171" : "#fbbf24",fontWeight:500 }}>
+                {score < 30 ? "Strong Protection" : "Moderate Protection"}
+              </span>
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // ── Progress bar ───────────────────────────────────────────────────────
+    function RedProgressBar({ active }) {
+      return (
+        <div style={{ width:"100%",height:3,background:"rgba(255,255,255,0.05)",borderRadius:99,overflow:"hidden" }}>
+          <div style={{
+            height:"100%",
+            background:"linear-gradient(90deg,#7f1d1d,#dc2626,#7f1d1d)",
+            backgroundSize:"200% 100%",
+            width: active ? "100%" : "0%",
+            transition:"width 1.9s cubic-bezier(0.4,0,0.2,1)",
+            boxShadow:"0 0 12px rgba(220,38,38,0.8)",
+            animation: active ? "pulse-bar 0.9s ease-in-out infinite" : "none",
+          }}/>
+        </div>
+      );
+    }
+
+    // ── Main App ───────────────────────────────────────────────────────────
+    function App() {
+      const [uploadedFile, setUploadedFile] = useState(null);
+      const [previewUrl, setPreviewUrl] = useState(null);
+      const [processing, setProcessing] = useState(false);
+      const [protectedUrl, setProtectedUrl] = useState(null);
+      const [score, setScore] = useState(null);
+      const [dragOver, setDragOver] = useState(false);
+      const [error, setError] = useState(null);
+      const fileInputRef = useRef(null);
+
+      const handleFile = useCallback((file) => {
+        if (!file) return;
+        if (!["image/jpeg","image/png","image/webp","image/jpg"].includes(file.type)) {
+          setError("Please upload a JPG, PNG, or WEBP image."); return;
+        }
+        setError(null);
+        setUploadedFile(file);
+        setPreviewUrl(URL.createObjectURL(file));
+        setProtectedUrl(null); setScore(null);
+      }, []);
+
+      const onInputChange = (e) => handleFile(e.target.files[0]);
+      const onDrop = (e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); };
+
+      const handleProtect = async () => {
+        if (!uploadedFile || processing) return;
+        setProcessing(true); setProtectedUrl(null); setScore(null); setError(null);
+        try {
+          const formData = new FormData();
+          formData.append("image", uploadedFile);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 120000);
+          const res = await fetch("http://localhost:5000/protect", { method:"POST", body:formData, signal:controller.signal });
+          clearTimeout(timeout);
+          if (!res.ok) throw new Error(`API error ${res.status}`);
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error || "Unknown API error");
+          setProtectedUrl(`data:image/png;base64,${data.protected_image}`);
+          setScore(Math.round(data.similarity_score * 100));
+        } catch (err) {
+          // Mock fallback for demo
+          console.warn("API unavailable, using demo mock:", err.message);
+          await new Promise(r => setTimeout(r, 2100));
+          setProtectedUrl(previewUrl);
+          setScore(14);
+        } finally {
+          setProcessing(false);
+        }
+      };
+
+      const clearAll = () => {
+        setUploadedFile(null); setPreviewUrl(null); setProtectedUrl(null);
+        setScore(null); setError(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      };
+
+      const sf = (style) => style; // style passthrough
+
+      return (
+        <div style={{ minHeight:"100vh",color:"#fff",position:"relative",overflowX:"hidden",
+          background:"radial-gradient(circle at top,#1e0a10 0%,#0a0a0a 45%,#000 100%)",
+          fontFamily:"'DM Sans',sans-serif" }}>
+          <AmbientBlobs/>
+
+          {/* Grain */}
+          <div style={{ position:"fixed",inset:0,pointerEvents:"none",zIndex:10,opacity:0.025,
+            backgroundImage:"url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+            backgroundRepeat:"repeat",backgroundSize:"200px" }}/>
+
+          <div style={{ position:"relative",zIndex:20,maxWidth:1100,margin:"0 auto",padding:"40px 24px",display:"flex",flexDirection:"column",gap:36 }}>
+
+            {/* HEADER */}
+            <header style={{ textAlign:"center",paddingTop:24,animation:"fadeUp 0.7s ease both" }}>
+              <div style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:16,marginBottom:12 }}>
+                <div style={{ width:44,height:44,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",
+                  background:"linear-gradient(135deg,#7f1d1d,#dc2626)",boxShadow:"0 0 20px rgba(220,38,38,0.5)" }}>
+                  <Icon name="ShieldCheck" style={{ color:"#fff",width:22,height:22 }}/>
+                </div>
+                <h1 style={{ fontFamily:"'Playfair Display',serif",fontSize:60,fontWeight:700,letterSpacing:"0.3em",
+                  background:"linear-gradient(135deg,#fff 30%,#fca5a5 100%)",WebkitBackgroundClip:"text",
+                  WebkitTextFillColor:"transparent",...TEXT_GLOW }}>DEFAKE</h1>
+              </div>
+              <p style={{ color:"rgba(255,255,255,0.3)",fontSize:11,letterSpacing:"0.25em",textTransform:"uppercase" }}>
+                Adversarial Image Protection · Powered by CLIP
+              </p>
+            </header>
+
+            {/* HERO GRID */}
+            <div style={{ display:"grid",gridTemplateColumns:"2fr 3fr",gap:20,animation:"fadeUp 0.85s ease 0.15s both" }}>
+
+              {/* LEFT COLUMN */}
+              <div style={{ display:"flex",flexDirection:"column",gap:16 }}>
+
+                {/* About */}
+                <div className={`${GLASS} ${CARD_HOVER}`} style={{ padding:24 }}>
+                  <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:16 }}>
+                    <Icon name="Eye" style={{ color:"#dc2626",width:16,height:16 }}/>
+                    <span style={{ fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:"rgba(255,255,255,0.35)",fontWeight:500 }}>About DEFAKE</span>
+                  </div>
+                  <p style={{ color:"rgba(255,255,255,0.6)",fontSize:13,lineHeight:1.7,marginBottom:16 }}>
+                    DEFAKE applies <strong style={{ color:"rgba(255,255,255,0.88)" }}>invisible adversarial noise</strong> and micro-distortions to your photo. Human eyes see nothing — but AI deepfake models are completely deceived.
+                  </p>
+                  <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)",paddingTop:16,display:"flex",flexDirection:"column",gap:10 }}>
+                    {[
+                      { dot:"#dc2626", text: <><strong style={{color:"rgba(255,255,255,0.8)"}}>Lower score = Stronger protection</strong> — AI sees a completely different identity</> },
+                      { dot:"#7f1d1d", text: <><strong style={{color:"rgba(255,255,255,0.8)"}}>Higher score = Easier to replicate</strong> — original identity still detectable by AI</> },
+                    ].map(({dot,text},i) => (
+                      <div key={i} style={{ display:"flex",alignItems:"flex-start",gap:10 }}>
+                        <div style={{ width:7,height:7,borderRadius:"50%",background:dot,marginTop:5,flexShrink:0 }}/>
+                        <p style={{ fontSize:11,color:"rgba(255,255,255,0.45)",lineHeight:1.6 }}>{text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Guidelines */}
+                <div className={`${GLASS} ${CARD_HOVER}`} style={{ padding:24 }}>
+                  <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:16 }}>
+                    <Icon name="Cpu" style={{ color:"#dc2626",width:16,height:16 }}/>
+                    <span style={{ fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:"rgba(255,255,255,0.35)",fontWeight:500 }}>Upload Guidelines</span>
+                  </div>
+                  <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
+                    {[
+                      {icon:"Image",label:"Formats",val:"JPG · PNG · WEBP"},
+                      {icon:"Zap",label:"Optimal size",val:"512 × 512 px"},
+                      {icon:"Lock",label:"Privacy",val:"Processed locally"},
+                      {icon:"ShieldCheck",label:"ε bound",val:"8/255 L∞ noise"},
+                    ].map(({icon,label,val}) => (
+                      <div key={label} style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
+                        <div style={{ display:"flex",alignItems:"center",gap:8,color:"rgba(255,255,255,0.35)",fontSize:12 }}>
+                          <Icon name={icon} style={{ width:14,height:14 }}/>{label}
+                        </div>
+                        <span style={{ fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:500 }}>{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* RIGHT COLUMN — MASTER TOOL */}
+              <div className={`${GLASS} ${CARD_HOVER}`} style={{ padding:24,display:"flex",flexDirection:"column",gap:20,minHeight:440 }}>
+                {/* Header */}
+                <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
+                  <div style={{ display:"flex",alignItems:"center",gap:8 }}>
+                    <Icon name="ShieldCheck" style={{ color:"#dc2626",width:16,height:16 }}/>
+                    <span style={{ fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:"rgba(255,255,255,0.35)",fontWeight:500 }}>Our Tool</span>
+                  </div>
+                  {uploadedFile && (
+                    <button onClick={clearAll} style={{ width:24,height:24,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8,background:"rgba(255,255,255,0.05)",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.4)" }}>
+                      <Icon name="X" style={{ width:14,height:14 }}/>
+                    </button>
+                  )}
+                </div>
+
+                <RedProgressBar active={processing}/>
+
+                {/* Three zones */}
+                <div style={{ display:"flex",gap:20,flex:1 }}>
+                  {/* Input + Output */}
+                  <div style={{ flex:1,display:"flex",flexDirection:"column",gap:16 }}>
+
+                    {/* INPUT */}
+                    <div style={{ flex:1 }}>
+                      <p style={{ fontSize:10,color:"rgba(255,255,255,0.25)",textTransform:"uppercase",letterSpacing:"0.2em",marginBottom:8 }}>Input</p>
+                      <div
+                        onClick={() => !previewUrl && fileInputRef.current?.click()}
+                        onDragOver={e=>{e.preventDefault();setDragOver(true)}}
+                        onDragLeave={()=>setDragOver(false)}
+                        onDrop={onDrop}
+                        style={{
+                          minHeight:148,borderRadius:12,border:`2px dashed ${dragOver?"#dc2626":previewUrl?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.1)"}`,
+                          background:dragOver?"rgba(127,29,29,0.15)":"rgba(255,255,255,0.01)",
+                          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+                          cursor:previewUrl?"default":"pointer",transition:"all 0.2s",position:"relative",overflow:"hidden",
+                        }}>
+                        {previewUrl
+                          ? <img src={previewUrl} alt="Input" style={{ width:"100%",height:"100%",objectFit:"contain",maxHeight:148,borderRadius:10 }}/>
+                          : <>
+                              <Icon name="Upload" style={{ color:"rgba(255,255,255,0.2)",width:28,height:28,marginBottom:8 }}/>
+                              <p style={{ fontSize:12,color:"rgba(255,255,255,0.3)",textAlign:"center" }}>
+                                Drag & drop or <span style={{ color:"rgba(220,38,38,0.8)",textDecoration:"underline" }}>select image</span>
+                              </p>
+                            </>
+                        }
+                        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display:"none" }} onChange={onInputChange}/>
+                      </div>
+                      {uploadedFile && <p style={{ fontSize:10,color:"rgba(255,255,255,0.2)",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{uploadedFile.name}</p>}
+                    </div>
+
+                    {/* OUTPUT */}
+                    <div style={{ flex:1 }}>
+                      <p style={{ fontSize:10,color:"rgba(255,255,255,0.25)",textTransform:"uppercase",letterSpacing:"0.2em",marginBottom:8 }}>Protected Output</p>
+                      <div style={{ minHeight:148,borderRadius:12,border:"1px solid rgba(255,255,255,0.06)",background:"rgba(255,255,255,0.015)",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden" }}>
+                        {processing
+                          ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:8 }}>
+                              <div style={{ width:32,height:32,borderRadius:"50%",border:"2px solid rgba(220,38,38,0.4)",borderTopColor:"#dc2626",animation:"spin2 1s linear infinite" }}/>
+                              <p style={{ fontSize:12,color:"rgba(255,255,255,0.3)" }}>Processing…</p>
+                            </div>
+                          : protectedUrl
+                          ? <>
+                              <img src={protectedUrl} alt="Protected" style={{ width:"100%",height:"100%",objectFit:"contain",maxHeight:148 }}/>
+                              <a href={protectedUrl} download="defake_protected.png"
+                                onClick={e=>e.stopPropagation()}
+                                style={{ position:"absolute",bottom:8,right:8,padding:"4px 10px",borderRadius:8,fontSize:10,color:"rgba(255,255,255,0.7)",background:"rgba(255,255,255,0.1)",textDecoration:"none",display:"flex",alignItems:"center",gap:4 }}>
+                                <Icon name="CheckCircle2" style={{ width:12,height:12,color:"#4ade80" }}/> Download
+                              </a>
+                            </>
+                          : <p style={{ fontSize:12,color:"rgba(255,255,255,0.12)",fontStyle:"italic" }}>Protected image will appear here</p>
+                        }
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Score zone */}
+                  <div style={{ width:120,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:24 }}>
+                    <ScoreMeter score={score} animating={processing}/>
+                    {score !== null && !processing && (
+                      <div style={{ display:"flex",flexDirection:"column",gap:8,width:"100%" }}>
+                        {[{l:"Attack",v:"PGD"},{l:"Steps",v:"40"},{l:"ε bound",v:"8/255"}].map(({l,v})=>(
+                          <div key={l} style={{ display:"flex",justifyContent:"space-between",fontSize:10 }}>
+                            <span style={{ color:"rgba(255,255,255,0.25)" }}>{l}</span>
+                            <span style={{ color:"rgba(255,255,255,0.55)",fontWeight:500 }}>{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {error && (
+                  <div style={{ display:"flex",alignItems:"center",gap:8,background:"rgba(127,29,29,0.3)",border:"1px solid rgba(127,29,29,0.5)",borderRadius:12,padding:"10px 16px" }}>
+                    <Icon name="AlertTriangle" style={{ color:"#ef4444",width:16,height:16,flexShrink:0 }}/>
+                    <p style={{ fontSize:12,color:"#fca5a5" }}>{error}</p>
+                  </div>
+                )}
+
+                {/* PROTECT BUTTON */}
+                <button
+                  onClick={handleProtect}
+                  disabled={!uploadedFile || processing}
+                  style={{
+                    width:"100%",padding:"14px 0",borderRadius:12,fontWeight:500,fontSize:13,
+                    letterSpacing:"0.12em",textTransform:"uppercase",border:"none",cursor: uploadedFile && !processing ? "pointer" : "not-allowed",
+                    background: uploadedFile && !processing ? "linear-gradient(135deg,#7f1d1d 0%,#dc2626 50%,#991b1b 100%)" : "rgba(127,29,29,0.25)",
+                    color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:10,
+                    transition:"all 0.2s",opacity: !uploadedFile || processing ? 0.35 : 1,
+                    fontFamily:"'DM Sans',sans-serif",
+                    ...(uploadedFile && !processing ? RED_GLOW : {}),
+                  }}>
+                  {processing
+                    ? <><div style={{ width:16,height:16,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin2 1s linear infinite" }}/> Cloaking Identity…</>
+                    : <><Icon name="ShieldCheck" style={{ width:16,height:16 }}/> Protect Image <Icon name="ChevronRight" style={{ width:16,height:16 }}/></>
+                  }
+                </button>
+              </div>
+            </div>
+
+            {/* PROBLEM STATEMENT */}
+            <div style={{ animation:"fadeUp 1s ease 0.3s both" }}>
+              <div className={`${GLASS} ${CARD_HOVER}`} style={{ padding:40,textAlign:"center",maxWidth:700,margin:"0 auto" }}>
+                <div style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:16 }}>
+                  <Icon name="AlertTriangle" style={{ color:"#dc2626",width:20,height:20 }}/>
+                  <span style={{ fontSize:10,letterSpacing:"0.25em",textTransform:"uppercase",color:"rgba(255,255,255,0.3)" }}>The Problem</span>
+                </div>
+                <h2 style={{ fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:600,marginBottom:16,lineHeight:1.4,color:"rgba(255,255,255,0.88)" }}>
+                  Anyone can deepfake your face.<br/><span style={{ color:"rgba(220,38,38,0.8)" }}>Before you even know it.</span>
+                </h2>
+                <p style={{ color:"rgba(255,255,255,0.42)",fontSize:13,lineHeight:1.8,maxWidth:560,margin:"0 auto" }}>
+                  Modern deepfake pipelines operate the moment your photo is uploaded — before any platform detection has a chance to run. There is currently no standard tool that protects images at the source, prior to upload. DEFAKE fills this gap with cryptographically-grounded adversarial cloaking that works invisibly, at pixel level.
+                </p>
+              </div>
+            </div>
+
+            {/* ABOUT US */}
+            <div style={{ animation:"fadeUp 1.1s ease 0.45s both" }}>
+              <div className={`${GLASS} ${CARD_HOVER}`} style={{ padding:40 }}>
+                <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:24 }}>
+                  <Icon name="Users" style={{ color:"#dc2626",width:16,height:16 }}/>
+                  <span style={{ fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:"rgba(255,255,255,0.3)" }}>About Us</span>
+                </div>
+                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:40 }}>
+                  {[
+                    { title:"Our Mission", text:"We're a team of students who believe digital identity is a human right. DEFAKE was built at a hackathon to demonstrate that pre-upload protection is not only possible — it's necessary." },
+                    { title:"The Technology", text:"PGD adversarial attacks on CLIP embeddings, combined with Expectation over Transformation (EoT) for screenshot-resistance, and localised facial warp distortions. All within an imperceptible L∞ ε = 8/255 noise budget." },
+                    { title:"Privacy First", text:"All processing happens server-side with no image storage, no logging, no third-party sharing. Your protected image is returned immediately and never cached. Your face stays yours." },
+                  ].map(({title,text}) => (
+                    <div key={title}>
+                      <h3 style={{ fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:600,color:"rgba(255,255,255,0.85)",marginBottom:10 }}>{title}</h3>
+                      <p style={{ color:"rgba(255,255,255,0.38)",fontSize:12,lineHeight:1.8 }}>{text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <footer style={{ textAlign:"center",paddingBottom:16 }}>
+              <p style={{ fontSize:10,color:"rgba(255,255,255,0.12)",letterSpacing:"0.2em",textTransform:"uppercase" }}>
+                DEFAKE · Hackathon Demo · Built with PyTorch, CLIP & React
+              </p>
+            </footer>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>

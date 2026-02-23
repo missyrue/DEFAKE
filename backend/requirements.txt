@@ -1,0 +1,13 @@
+# Add this line to the very top of your requirements.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch>=2.1.0
+torchvision>=0.16.0
+transformers>=4.37.0
+opencv-python>=4.8.0
+mediapipe>=0.10.9
+Pillow>=10.0.0
+kornia>=0.7.0
+flask>=3.0.0
+flask-cors>=4.0.0
+numpy>=1.24.0
